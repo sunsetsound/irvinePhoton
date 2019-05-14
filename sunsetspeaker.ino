@@ -1,136 +1,203 @@
-// This #include statement was automatically added by the Particle IDE.
+#include <SSD1306_128x32.h>
+#include "Particle.h"
+
+//Use I2C with OLED RESET pin on D4
+#define OLED_RESET D4
+SSD1306_128x32 oled(OLED_RESET);
+
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 SYSTEM_THREAD(ENABLED);
 
-void dimThread(void *param);
-Thread thread("backgroundThread" ,dimThread);
-void rgbWiFiThread(void *param);
-Thread thread2("background2Thread" ,rgbWiFiThread);
+void backgroundThread(void *param);
+Thread thread2("backgroundThread" ,backgroundThread);
 system_tick_t lastThreadTime = 0;
 
-
-int spkrOn = 0;
-double voltage;
+bool spkrOn;
 int light;
-int dim = 255;
-int touchDetect; 
-int counter;
 int button;
+int percentage;
+double voltage;
+double filterVoltage = (analogRead(A2)/4095.0)*3.3*4.0; //we initallized instead of declared to 
+double RMSvoltage;
+float terms;
+unsigned long old_time = 0;
 
-
-void setup() {
-    Particle.variable("voltage", voltage); 
-    Particle.variable("light", light);
-    Particle.variable("button", button);
+void setup(){
+    oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    oled.display();
+    RGB.control(false);
+    Particle.variable("per", old_time);
+    Particle.variable("voltage", filterVoltage);
     Particle.function("relayHandler", relayHandler);
     pinMode(A1, INPUT); //photoresistor on A1
+    pinMode(A2, INPUT);
     pinMode(D5,INPUT); //D5 is button
-    RGB.control(true);
+    pinMode(D3,OUTPUT); //Relay Pin
+    Time.zone(-8);
+    Time.beginDST();
+    relayHandler("off"); //to initialize off screen
 }
 
-void loop() {
-    Particle.process();
-    button = digitalRead(D5);
-    if(button == 1){
-        if (spkrOn == 1){
-            digitalWrite(D3,LOW); //relay sense on D3
-            spkrOn = 0;
-            delay(250);
+void loop(){
+        button = digitalRead(D5);
+        if(button == 1){
+            relayHandler(" ");
         }
-        else{
-            digitalWrite(D3,HIGH);
-            spkrOn = 1;
-            delay(250);
-        }
-    }
-    voltage = (analogRead(A2)/4095.0)*3.3*4.0; 
-    //analogRead will map 0-3.3v as 0 to 4095; multiply by 4 resistors to get vbatt
-    //voltage divider on A2
-    
-    /*
-    broken IR sensor code
-    touchDetect = digitalRead(D4);
-    if(touchDetect == 1) //something is breaking the line
-    {
-        counter = 0; 
-    }
-    else if(touchDetect == 0){
-        counter++;
-        if(counter>50){
-            if(spkrOn == 1){
-                digitalWrite(D3,LOW);
-                spkrOn = 0;
-                counter = 0;
+      
+        if(spkrOn){
+           oled.clearDisplay();
+           oled.setCursor(0,0);
+           oled.setTextSize(1); 
+           if(WiFi.ready()){
+               oled.print("WiFi:");
+               String SSID = String(WiFi.SSID());
+               if(SSID.length()>5){ //Cuts the SSID if the string is too long
+                   oled.print(SSID.substring(0,5));
+               }
+               else{ //add spaces and print extra spaces to keep format
+                   oled.print(SSID);
+                   for(int i=SSID.length(); i<5;i++){
+                       oled.print(" ");
+                   }
+               }
+               oled.print("   ");
+           }
+           else{
+               oled.print("WiFi: None");
+               oled.print("   ");
+           }
+           
+           
+           if(Time.hourFormat12()<10){ //adds an extra space in the time if it is single digit
+               oled.print(" ");
+           }
+           
+           oled.print(Time.hourFormat12());
+           oled.print(":");
+           
+           if(Time.minute()<10){//adds the leading 0 in the minute <10
+               oled.print("0");
+           }
+           
+           oled.print(Time.minute());
+           
+           if(Time.isPM())//adds am+pm after the time
+               oled.println(" PM");
+           else
+               oled.println(" AM");
+           
+           /*
+           if(millis() - old_time >= 1000)
+           {
+                 voltage = (analogRead(A2)/4095.0)*3.3*4.0;//analogRead will map 0-3.3v as 0 to 4095; multiply by 4 resistors to get vbatt
+                 filterVoltage = (0.2*voltage)+((1-0.2)*filterVoltage);
+                 percentage = map(filterVoltage,9.0,12.6,0.0,100.0);
+                 old_time = millis(); //update old_time to current millis()
             }
-            else{
-                digitalWrite(D3,HIGH);
-                spkrOn = 1;
-                counter = 0;
-            }
-            
+            */
+        voltage = (analogRead(A2)/4095.0)*3.3*4.0;//analogRead will map 0-3.3v as 0 to 4095; multiply by 4 resistors to get vbatt
+          
+        if(voltage<9 || voltage>13){//helps filter extreme values that will throw off calculations
+            delay(50);
+            voltage = (analogRead(A2)/4095.0)*3.3*4.0;
         }
-    }
-    */
-    delay(50);    
+        filterVoltage = (0.1*voltage)+((1-0.1)*filterVoltage);
+        percentage = map(filterVoltage,9.0,12.6,0.0,100.0);
+           
+            oled.setTextSize(2);
+            if(percentage<10){
+                oled.print("0");
+            }
+            oled.print(percentage);
+            oled.print("%");
+            oled.setTextSize(1);
+            oled.print(" ");
+            if
+            oled.print(voltage);
+            oled.print("V|");
+            oled.print(int((percentage/100.0)*10200));
+            oled.print("mAh");
+            oled.print("              ");
+            oled.display();
+            delay(25);
+       }
+       delay(25);
 }
 
-int relayHandler(String args){
+/*
+void slowThread(void *param){ //this thread gets voltage readings and calculates RMS voltage, runs slow bc of calculations
+    while(true){
+        // this takes a lot of computational resources
+        double sumSquares = 0.0;
+        terms = 0.0; 
+        
+        while (terms<100.0){
+            //voltage divider on A2, voltage = Vbatt
+            voltage = (analogRead(A2)/4095.0)*3.3*4.0;//analogRead will map 0-3.3v as 0 to 4095; multiply by 4 resistors to get vbatt
+            sumSquares = sumSquares + pow(voltage,2.0);
+            terms=terms+1.0;
+        }
+        RMSvoltage = sqrt(sumSquares/terms);
+
+        os_thread_delay_until(&lastThreadTime, 500);
+        
+    }
+}
+*/
+
+void backgroundThread(void *param){ //sets the color of led based on Wifi status
+    while(true){
+        //status LED dimming
+        light = analogRead(A1);  //max value of 4095, 12bit resolution at 3.3v
+        light = map(light,0,4095,10,255);
+        RGB.brightness(light);
+        
+        os_thread_delay_until(&lastThreadTime, 25);
+    }
+}
+
+
+//Handles Requests to turn on the speaker from Google Assistant, Alexa, and IFTTT
+bool relayHandler(String args){
     if (args == "on" || args == "connect"){
         digitalWrite(D3,HIGH);
-        spkrOn = 1;
+        oled.clearDisplay();
+        oled.setCursor(0,0);
+        oled.setTextColor(WHITE);
+        oled.setTextSize(2.5);
+        oled.println("Sunset");
+        oled.println("   Sounds");
+        oled.display();
+        delay(1500);
+        spkrOn = TRUE;
     }
     else if (args =="off" || args == "disconnect"){
         digitalWrite(D3,LOW);
-        spkrOn = 0;
+        oled.setCursor(0,0);
+        oled.clearDisplay();
+        oled.display();
+        spkrOn = FALSE;
+        delay(500);
     }
-    else if (spkrOn == 1){
+    else if (spkrOn){
         digitalWrite(D3,LOW);
-        spkrOn = 0;
+        oled.setCursor(0,0);
+        oled.clearDisplay();
+        oled.display();
+        spkrOn = FALSE;
+        delay(500);
     }
     else{
         digitalWrite(D3,HIGH);
-        spkrOn = 1;
+        oled.clearDisplay();
+        oled.setCursor(0,0);
+        oled.setTextColor(WHITE);
+        oled.setTextSize(2);
+        oled.println("Sunset");
+        oled.println("   Sounds");
+        oled.display();
+        delay(1500);
+        spkrOn = TRUE;
     }
     return spkrOn;
 }
-
-void dimThread(void *param){
-    while(true) {
-        if(!spkrOn){
-    		light = analogRead(A1);
-            if(light<500 && dim > 13){ //after the photoresistor returns ~<1 V, dim the RGB led to 5% 
-                dim--;
-                RGB.brightness(dim);
-            }
-            else if(light<1500 && light>500){ //inbetween values, we need to check if dim is above or below
-                if(dim<100){
-                    dim++;
-                    RGB.brightness(dim);
-                }
-                else if (dim>100){
-                    dim--;
-                    RGB.brightness(dim);
-                }
-            }
-            else if(light>1500 && dim < 255){ //greater than ~1V will increment and increase RGB led to 100%
-                dim++;
-                RGB.brightness(dim);
-            }
-        }
-		os_thread_delay_until(&lastThreadTime, 1500); 
-	}
-}
-
-void rgbWiFiThread(void *param){ //sets the color of led based on Wifi status and battery
-    while(true){
-        if(WiFi.ready())
-            RGB.color(0,255,255);
-        else if (WiFi.connecting())
-            RGB.color(252, 192, 202);
-        else
-            RGB.color(255, 234, 150);
-    os_thread_delay_until(&lastThreadTime, 1000);// Delay so we're called every 1500 milliseconds 
-    }
-}
-
-

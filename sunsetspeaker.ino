@@ -1,20 +1,29 @@
+// This #include statement was automatically added by the Particle IDE.
+#include <hsv.h>
+#include <neopixel.h>
 #include <SSD1306_128x32.h>
-
 #include "Particle.h"
+
+STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
+SYSTEM_THREAD(ENABLED);
+
+#define PIXEL_COUNT 1
+#define PIXEL_PIN D6
+#define PIXEL_TYPE WS2812B
 
 //Use I2C with OLED RESET pin on D4
 #define OLED_RESET D4
 SSD1306_128x32 oled(OLED_RESET);
 
-STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
-SYSTEM_THREAD(ENABLED);
-SYSTEM_MODE(SEMI_AUTOMATIC);
+Adafruit_NeoPixel led(PIXEL_COUNT, PIXEL_PIN, PIXEL_TYPE);
+
 
 void mainThread(void * param);
 Thread thread("mainThread", mainThread);
 void backgroundThread(void * param);
 Thread thread2("backgroundThread", backgroundThread);
 system_tick_t lastThreadTime = 0;
+system_tick_t lastThreadTime2 = 0;
 
 bool spkrOn;
 int light;
@@ -23,26 +32,62 @@ int percentage;
 double voltage;
 double filterVoltage = (analogRead(A2) / 4095.0) * 3.3 * 4.0; //we initallized instead of declared to 
 unsigned long old_time = 0;
+uint8_t hue = 0;
 
 void setup() {
   Particle.connect();
   oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   oled.display();
   RGB.control(false);
-  Particle.variable("per", old_time);
+  Particle.variable("per", button);
   Particle.variable("voltage", filterVoltage);
   Particle.function("relayHandler", relayHandler);
   pinMode(A1, INPUT); //photoresistor on A1
   pinMode(A2, INPUT);
   pinMode(D5, INPUT); //D5 is button
   pinMode(D3, OUTPUT); //Relay Pin
+  //pinMode(D6, OUTPUT); //D6 is neopixel low level
+  //D1 and D0  are used as i2C comms for OLED, D4 reserved as reset pin
+  pinMode(D2, INPUT);
   Time.zone(-8);
   Time.beginDST();
   relayHandler("off"); //to initialize off screen
+  led.begin();
+  led.show();
 }
 
-void loop() {
 
+void loop() {
+    button = digitalRead(D5);
+    if (button == 1) {
+      relayHandler(" ");
+    }
+    
+    if(spkrOn){
+        int sound = digitalRead(D2);
+        HsvColor hsv(hue, 255, 255);
+        RgbColor rgb = HsvToRgb(hsv);
+        
+        if(millis()-old_time >= 100){
+            hue++;
+            old_time = millis();
+        }
+        
+        if(sound == 1){
+            led.clear();
+            led.setPixelColor(0,rgb.r,rgb.g,rgb.b);
+            led.show();
+        }
+        else{
+            led.clear();
+            led.show();
+        }
+    }
+    else
+    {
+        led.clear();
+        led.show();
+    }
 }
 
 void mainThread(void * param) { //this thread gets voltage readings and calculates RMS voltage, runs slow bc of calculations
@@ -104,7 +149,7 @@ void mainThread(void * param) { //this thread gets voltage readings and calculat
         voltage = (analogRead(A2) / 4095.0) * 3.3 * 4.0;
       }
       filterVoltage = (0.1 * voltage) + ((1 - 0.1) * filterVoltage);
-      percentage = map(filterVoltage, 9.0, 12.6, 0.0, 100.0);
+      percentage = map(filterVoltage, 9.3, 12.3, 0.0, 100.0);
       if (percentage > 100) {
         percentage = 100;
       }
@@ -121,36 +166,37 @@ void mainThread(void * param) { //this thread gets voltage readings and calculat
         oled.print("%");
       }
       oled.setTextSize(1);
-      oled.setCursor(90, 10);
+      oled.setCursor(50,20);//90, 10
       oled.print(voltage);
-      oled.print("V");
-      oled.setCursor(85, 17);
-      oled.print(int((percentage / 100.0) * 10200));
-      oled.print("mAh");
+      oled.print("V ");
+      //oled.setCursor(88, 20);
+      oled.print(int((percentage / 100.0) * 122.4));
+      oled.print("Wh");
+      oled.setCursor(50, 10);
+      oled.print(int((percentage/100.0) * 900));
+      oled.print(" Mins Left");
       oled.display();
       delay(25);
     }
     delay(25);
-    os_thread_delay_until( & lastThreadTime, 500);
+    os_thread_delay_until(&lastThreadTime, 500);
 
   }
 }
 
+
 void backgroundThread(void * param) { //dims LED and handles button read
   while (true) {
-    button = digitalRead(D5);
-    if (button == 1) {
-      relayHandler(" ");
-    }
     //status LED dimming
     light = analogRead(A1); //max value of 4095, 12bit resolution at 3.3v
     light = map(light, 0, 4095, 10, 255);
     RGB.brightness(light);
-
-    os_thread_delay_until( & lastThreadTime, 25);
+    
+    os_thread_delay_until(&lastThreadTime2, 50);
   }
 }
-    
+
+ 
 //Handles Requests to turn on the speaker from Google Assistant, Alexa, and IFTTT
 bool relayHandler(String args) {
   if (args == "on" || args == "connect") {
@@ -175,9 +221,10 @@ bool relayHandler(String args) {
     digitalWrite(D3, LOW);
     oled.setCursor(0, 0);
     spkrOn = FALSE;
+    delay(100);
     oled.clearDisplay();
     oled.display();
-    delay(500);
+    delay(400);
   } else {
     digitalWrite(D3, HIGH);
     oled.clearDisplay();
@@ -192,3 +239,5 @@ bool relayHandler(String args) {
   }
   return spkrOn;
 }
+
+

@@ -7,7 +7,7 @@
 STARTUP(WiFi.selectAntenna(ANT_EXTERNAL));
 SYSTEM_THREAD(ENABLED);
 
-#define PIXEL_COUNT 1
+#define PIXEL_COUNT 16
 #define PIXEL_PIN D6
 #define PIXEL_TYPE WS2812B
 
@@ -75,7 +75,9 @@ void loop() {
         
         if(sound == 1){
             led.clear();
-            led.setPixelColor(0,rgb.r,rgb.g,rgb.b);
+            for(int n=0; n<16; n++){
+                led.setPixelColor(n,rgb.r,rgb.g,rgb.b);
+            }
             led.show();
         }
         else{
@@ -148,8 +150,8 @@ void mainThread(void * param) { //this thread gets voltage readings and calculat
         delay(50);
         voltage = (analogRead(A2) / 4095.0) * 3.3 * 4.0;
       }
-      filterVoltage = (0.1 * voltage) + ((1 - 0.1) * filterVoltage);
-      percentage = map(filterVoltage, 9.3, 12.3, 0.0, 100.0);
+      filterVoltage = (0.02 * voltage) + ((1 - 0.02) * filterVoltage);
+      percentage = map(filterVoltage, 9.55, 12.275, 0.0, 100.0);
       if (percentage > 100) {
         percentage = 100;
       }
@@ -173,7 +175,7 @@ void mainThread(void * param) { //this thread gets voltage readings and calculat
       oled.print(int((percentage / 100.0) * 122.4));
       oled.print("Wh");
       oled.setCursor(50, 10);
-      oled.print(int((percentage/100.0) * 900));
+      oled.print(int((percentage/100.0) * 600));
       oled.print(" Mins Left");
       oled.display();
       delay(25);
@@ -191,8 +193,7 @@ void backgroundThread(void * param) { //dims LED and handles button read
     light = analogRead(A1); //max value of 4095, 12bit resolution at 3.3v
     light = map(light, 0, 4095, 10, 255);
     RGB.brightness(light);
-    
-    os_thread_delay_until(&lastThreadTime2, 50);
+    delay(10);
   }
 }
 
@@ -239,5 +240,4 @@ bool relayHandler(String args) {
   }
   return spkrOn;
 }
-
 
